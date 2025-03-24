@@ -2,9 +2,16 @@ import socket
 import threading
 import hashlib
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes, serialization
+import base64
 
-KEY = b'32-byte-key'
-cipher = Fernet(Fernet.generate_key())
+parameters = dh.generate_parameters(generator=2, key_size=2048)
+parameters_bytes = parameters.parameter_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.ParameterFormat.PKCS3
+)
 
 users = {}
 rooms = {}
@@ -13,6 +20,16 @@ rooms_lock = threading.Lock()
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
+def derive_key(shared_secret):
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"chatroom-key"
+    )
+    raw_key = hkdf.derive(shared_secret)
+    return base64.urlsafe_b64encode(raw_key)
 
 def broadcast(room_key, message, exclude_socket=None):
     with rooms_lock:
@@ -28,6 +45,40 @@ def handle_client(client_socket, address):
     print(f"New connection from {address}")
     username = None
     current_room = None
+
+   # Diffie-Hellman key exchange
+    try:
+        # Send DH parameters to client
+        client_socket.send(parameters_bytes)
+        
+        # Generate server private/public key pair
+        private_key = parameters.generate_private_key()
+        public_key = private_key.public_key()
+        public_key_bytes = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        client_socket.send(public_key_bytes)
+        
+        # Receive client public key
+        client_public_bytes = client_socket.recv(2048)
+        client_public_key = serialization.load_pem_public_key(client_public_bytes)
+        
+        # Verify type
+        if not isinstance(client_public_key, dh.DHPublicKey):
+            print(f"Error: Invalid public key type from {address}")
+            client_socket.close()
+            return
+        
+        # Compute shared secret
+        shared_secret = private_key.exchange(client_public_key)
+        key = derive_key(shared_secret)
+        global cipher  # Simplified for example; avoid in production
+        cipher = Fernet(key)
+    except Exception as e:
+        print(f"Error in DH exchange with {address}: {e}")
+        client_socket.close()
+        return
 
     while True:
         try:
