@@ -1,6 +1,10 @@
 import socket
 import threading
 import hashlib
+from cryptography.fernet import Fernet
+
+KEY = b'32-byte-key'
+cipher = Fernet(Fernet.generate_key())
 
 users = {}
 users_lock = threading.Lock()
@@ -14,41 +18,49 @@ def handle_client(client_socket, address):
 
     while True:
         try:
-            data = client_socket.recv(1024).decode()
-            if not data:
+            encrypted_data = client_socket.recv(1024).decode()
+            if not encrypted_data:
                 break
+
+            data = cipher.decrypt(encrypted_data).decode() 
 
             parts = data.split()
             if len(parts) < 3:
-                client_socket.send("Invalid command format".encode())
+                response = "Invalid command format"
+                client_socket.send(cipher.encrypt(response.encode()))
                 continue
             command, username, password = parts[0], parts[1], parts[2]
 
             if command == "Register:":
                 with users_lock:
                     if username in users:
-                        client_socket.send("Username already taken".encode())
+                        response = "Username already taken"
+                        client_socket.send(cipher.encrypt(response.encode()))
                     else:
                         users[username] = hash_password(password)
-                        client_socket.send("Registered successfully".encode())
+                        response = "Registered successfully"
                         print(f"{username} registered.")
+
+                    client_socket.send(cipher.encrypt(response.encode()))
 
             elif command == "Login:":
                 with users_lock:
                     if username not in users:
-                        client_socket.send("Username not found".encode())
+                        response = "Username not found"
                     elif users[username] == hash_password(password):
-                        client_socket.send("Login successful...".encode())
+                        response = "Login successful..."
                         logged_in = True
                         print(f"{username} logged in")
                     else:
-                        client_socket.send("Incorrect password!".encode())
+                        response = "Incorrect Password"
+                    client_socket.send(cipher.encrypt(response.encode()))
             else:
-                client_socket.send("Unknown command".encode())
+                response = "Unknown command"
+                client_socket.send(cipher.encrypt(response.encode()))
 
 
             if logged_in:
-                client_socket.send("Enter chat commands".encode())
+                client_socket.send(cipher.encrypt("Ready for chat commands.".encode()))
 
         except Exception as e:
             print(f"Error handling client {address}. Exception: {e}")

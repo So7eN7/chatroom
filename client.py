@@ -1,4 +1,9 @@
 import socket
+from cryptography.fernet import Fernet
+
+KEY = b'32-byte-key'
+cipher = Fernet(Fernet.generate_key())
+
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -20,13 +25,16 @@ else:
     client_socket.close()
     exit()
 
-client_socket.send(command.encode())
+encrypted_command = cipher.encrypt(command.encode())
+client_socket.send(encrypted_command)
 
-response = client_socket.recv(1024).decode()
+encrypted_response = client_socket.recv(1024).decode()
+response = cipher.decrypt(encrypted_response).decode()
 print(f"Server response: {response}")
 
 if response == "Login successful":
-    next_response = client_socket.recv(1024).decode()
+    encrypted_next_response = client_socket.recv(1024).decode()
+    next_response = cipher.decrypt(encrypted_next_response).decode()
     print(f"Server response: {next_response}")
 
 client_socket.close()
