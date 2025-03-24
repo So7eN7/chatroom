@@ -7,14 +7,27 @@ KEY = b'32-byte-key'
 cipher = Fernet(Fernet.generate_key())
 
 users = {}
+rooms = {}
 users_lock = threading.Lock()
+rooms_lock = threading.Lock()
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def broadcast(room_key, message, exclude_socket=None):
+    with rooms_lock:
+        if room_key in rooms:
+            for username, socket in rooms[room_key].items():
+                if socket != exclude_socket:
+                    try:
+                        socket.send(cipher.encrypt(message.encode()))
+                    except:
+                        pass
+
 def handle_client(client_socket, address):
     print(f"New connection from {address}")
-    logged_in = False
+    username = None
+    current_room = None
 
     while True:
         try:
@@ -25,47 +38,60 @@ def handle_client(client_socket, address):
             data = cipher.decrypt(encrypted_data).decode() 
 
             parts = data.split()
-            if len(parts) < 3:
-                response = "Invalid command format"
-                client_socket.send(cipher.encrypt(response.encode()))
+            if len(parts) < 2:
+                client_socket.send(cipher.encrypt("Invalid command format".encode()))
                 continue
-            command, username, password = parts[0], parts[1], parts[2]
 
-            if command == "Register:":
+            command = parts[0]
+
+            if command == "Register:" and len(parts) == 3:
+                username, password = parts[1], parts[2]
                 with users_lock:
                     if username in users:
-                        response = "Username already taken"
-                        client_socket.send(cipher.encrypt(response.encode()))
+                        client_socket.send(cipher.encrypt("Username already taken".encode()))
                     else:
                         users[username] = hash_password(password)
-                        response = "Registered successfully"
+                        client_socket.send(cipher.encrypt("Registered successfully".encode()))
                         print(f"{username} registered.")
 
-                    client_socket.send(cipher.encrypt(response.encode()))
 
-            elif command == "Login:":
+            elif command == "Login:" and len(parts) == 3:
+                username, password = parts[1], parts[2]
                 with users_lock:
                     if username not in users:
-                        response = "Username not found"
+                        client_socket.send(cipher.encrypt("Username not found".encode()))
                     elif users[username] == hash_password(password):
-                        response = "Login successful..."
-                        logged_in = True
+                        client_socket.send(cipher.encrypt("Login successful...".encode()))
                         print(f"{username} logged in")
                     else:
-                        response = "Incorrect Password"
-                    client_socket.send(cipher.encrypt(response.encode()))
+                        client_socket.send(cipher.encrypt("Incorrect password".encode()))
+            elif command == "Key:" and len(parts) == 2 and username:
+                current_room = parts[1]
+                with rooms_lock:
+                    if current_room not in rooms:
+                        rooms[current_room] = {}
+                    rooms[current_room][username] = client_socket
+
+                client_socket.send(cipher.encrypt("Hello, welcome".encode()))
+                broadcast(current_room, f"Hello {username}", client_socket)
+                broadcast(current_room, f"{username} entered the chat room")
+                print(f"{username} joined from {current_room}")
             else:
-                response = "Unknown command"
-                client_socket.send(cipher.encrypt(response.encode()))
+                client_socket.send(cipher.encrypt("Invalid command".encode()))
 
-
-            if logged_in:
-                client_socket.send(cipher.encrypt("Ready for chat commands.".encode()))
 
         except Exception as e:
             print(f"Error handling client {address}. Exception: {e}")
             break
 
+    if username and current_room and current_room in rooms:
+        with rooms_lock:
+            if username in rooms[current_room]:
+                del rooms[current_room][username]
+                if not rooms[current_room]:
+                    del rooms[current_room]
+                else:
+                    broadcast(current_room, f"{username} left the chat room")
     client_socket.close()
     print(f"Connection with {address} closed")
 

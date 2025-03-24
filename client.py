@@ -15,26 +15,21 @@ client_socket.connect((host, port))
 action = input("Register or Login: ").strip().lower()
 username = input("Username: ").strip()
 password = input("Password: ").strip()
+command = f"{action.capitalize()}: {username} {password}"
 
-if action == "register":
-    command = f"Register: {username} {password}"
-elif action == "login":
-    command = f"Login: {username} {password}"
-else:
-    print("Invalid action")
-    client_socket.close()
-    exit()
+client_socket.send(cipher.encrypt(command.encode()))
 
-encrypted_command = cipher.encrypt(command.encode())
-client_socket.send(encrypted_command)
-
-encrypted_response = client_socket.recv(1024).decode()
-response = cipher.decrypt(encrypted_response).decode()
+response = cipher.decrypt(client_socket.recv(1024)).decode()
 print(f"Server response: {response}")
 
 if response == "Login successful":
-    encrypted_next_response = client_socket.recv(1024).decode()
-    next_response = cipher.decrypt(encrypted_next_response).decode()
-    print(f"Server response: {next_response}")
+    room_key = input("Enter room key: ").strip()
+    client_socket.send(cipher.encrypt(f"Key: {room_key}".encode()))
+
+    welcome = cipher.decrypt(client_socket.recv(1024)).decode()
+    print(f"Server response: {welcome}")
+
+    notification = cipher.decrypt(client_socket.recv(1024)).decode()
+    print(f"Room: {notification}")
 
 client_socket.close()
