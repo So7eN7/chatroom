@@ -82,18 +82,25 @@ def main():
         print(f"Room: {notification}")
 
         while True:
-            msg_type = input("Type 'public' or 'private' (or 'exit'): ").strip().lower()
+            msg_type = input("Type 'public', 'private', 'list', or 'exit': ").strip().lower()
             if msg_type == "exit":
+                client_socket.send(cipher.encrypt("Exit".encode()))
+                goodbye = cipher.decrypt(client_socket.recv(1024)).decode()
+                print(f"Server: {goodbye}")
                 break
-            message = input("Message: ").strip()
-            if msg_type == "public":
+            elif msg_type == "list":
+                client_socket.send(cipher.encrypt("List".encode()))
+                user_list = cipher.decrypt(client_socket.recv(1024)).decode()
+                print(f"Server: {user_list}")
+            elif msg_type == "public":
+                message = input("Message: ").strip()
                 command = f"Public message: from={username} length={len(message)} {message}"
                 client_socket.send(cipher.encrypt(command.encode()))
             elif msg_type == "private":
                 recipients = input("To (comma-separated usernames): ").strip().replace(" ", "")
+                message = input("Message: ").strip()
                 command = f"Private message: length={len(message)}, to={recipients} {message}"
-                client_socket.send(cipher.encrypt(command.encode()))
-
+                client_socket.send(cipher.encrypt(command.encode()))            
             try:
                 response = cipher.decrypt(client_socket.recv(1024)).decode()
                 print(f"Room: {response}")

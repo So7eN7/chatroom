@@ -144,6 +144,21 @@ def handle_client(client_socket, address):
                             rooms[current_room][recipient].send(
                                 cipher.encrypt(f"Private from {username}: {msg_body}".encode())
                             )
+            elif parts[0] == "List" and username and current_room:
+                with rooms_lock:
+                    user_list = ", ".join(rooms[current_room].keys())
+                    client_socket.send(cipher.encrypt(f"Users in room: {user_list}".encode()))
+            
+            elif parts[0] == "Exit" and username and current_room:
+                client_socket.send(cipher.encrypt("goodbye".encode()))
+                with rooms_lock:
+                    if username in rooms[current_room]:
+                        del rooms[current_room][username]
+                        if not rooms[current_room]:
+                            del rooms[current_room]
+                        else:
+                            broadcast(current_room, f"{username} left the chat room")
+                break  
             else:
                 client_socket.send(cipher.encrypt("Invalid command".encode()))
 
