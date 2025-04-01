@@ -127,6 +127,23 @@ def handle_client(client_socket, address):
                 broadcast(current_room, f"Hello {username}", client_socket)
                 broadcast(current_room, f"{username} entered the chat room")
                 print(f"{username} joined from {current_room}")
+            elif parts[0] == "Public" and username and current_room:
+                msg_parts = parts[1].split(" ", 2)
+                if msg_parts[0].startswith("from=") and msg_parts[1].startswith("length="):
+                    msg_body = msg_parts[2]
+                    broadcast(current_room, f"{username}: {msg_body}")
+            
+            elif parts[0] == "Private" and username and current_room:
+                header, msg_body = parts[1].split(" ", 1)
+                header_parts = header.split(", ")
+                length = header_parts[0].split("=")[1]
+                recipients = [r.split("=")[1] for r in header_parts[1:]]
+                with rooms_lock:
+                    for recipient in recipients:
+                        if recipient in rooms[current_room]:
+                            rooms[current_room][recipient].send(
+                                cipher.encrypt(f"Private from {username}: {msg_body}".encode())
+                            )
             else:
                 client_socket.send(cipher.encrypt("Invalid command".encode()))
 

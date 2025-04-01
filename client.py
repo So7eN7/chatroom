@@ -81,6 +81,25 @@ def main():
         notification = cipher.decrypt(client_socket.recv(1024)).decode()
         print(f"Room: {notification}")
 
+        while True:
+            msg_type = input("Type 'public' or 'private' (or 'exit'): ").strip().lower()
+            if msg_type == "exit":
+                break
+            message = input("Message: ").strip()
+            if msg_type == "public":
+                command = f"Public message: from={username} length={len(message)} {message}"
+                client_socket.send(cipher.encrypt(command.encode()))
+            elif msg_type == "private":
+                recipients = input("To (comma-separated usernames): ").strip().replace(" ", "")
+                command = f"Private message: length={len(message)}, to={recipients} {message}"
+                client_socket.send(cipher.encrypt(command.encode()))
+
+            try:
+                response = cipher.decrypt(client_socket.recv(1024)).decode()
+                print(f"Room: {response}")
+            except:
+                pass
+
     client_socket.close()
 
 if __name__ == "__main__":
