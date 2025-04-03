@@ -20,7 +20,6 @@ class ChatClient:
         self.running = False
         self.socket_lock = threading.Lock()
 
-        # Login/Register Frame
         self.auth_frame = tk.Frame(root)
         self.auth_frame.pack(pady=10)
         tk.Label(self.auth_frame, text="Action:").grid(row=0, column=0)
@@ -35,14 +34,12 @@ class ChatClient:
         self.password_entry.grid(row=2, column=1, columnspan=2)
         tk.Button(self.auth_frame, text="Submit", command=self.authenticate).grid(row=3, column=1, columnspan=2)
 
-        # Room Frame
         self.room_frame = tk.Frame(root)
         tk.Label(self.room_frame, text="Room Key:").grid(row=0, column=0)
         self.room_entry = tk.Entry(self.room_frame)
         self.room_entry.grid(row=0, column=1)
         tk.Button(self.room_frame, text="Join Room", command=self.join_room).grid(row=0, column=2)
 
-        # Chat Frame
         self.chat_frame = tk.Frame(root)
         self.chat_display = tk.Text(self.chat_frame, height=20, width=50, state="disabled")
         self.chat_display.pack(pady=5)
@@ -58,7 +55,8 @@ class ChatClient:
     def connect(self):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect(("127.0.0.1", 15000))
-        self.client_socket.settimeout(5.0)
+        self.client_socket.settimeout(0.1)  # Reduced from 1.0s
+        self.client_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         parameters_bytes = self.client_socket.recv(2048)
         parameters = serialization.load_pem_parameters(parameters_bytes)
         private_key = parameters.generate_private_key()
@@ -87,10 +85,9 @@ class ChatClient:
             return
         try:
             self.connect()
-            command = f"{action.capitalize()}: {username} {password}"
+            command = f"TS:{time.perf_counter()} {action.capitalize()}: {username} {password}"
             self.client_socket.send(self.cipher.encrypt(command.encode()))
             response = self.cipher.decrypt(self.client_socket.recv(1024)).decode()
-            print(f"Auth response: {response}")
             if response == "Login successful":
                 self.username = username
                 self.auth_frame.pack_forget()
@@ -114,10 +111,9 @@ class ChatClient:
             with self.socket_lock:
                 if not self.client_socket or self.client_socket.fileno() == -1:
                     raise ConnectionError("Socket is closed")
-                print(f"Sending room key: {self.room_key}")
-                self.client_socket.send(self.cipher.encrypt(f"Key: {self.room_key}".encode()))
+                command = f"TS:{time.perf_counter()} Key: {self.room_key}"
+                self.client_socket.send(self.cipher.encrypt(command.encode()))
             response = self.cipher.decrypt(self.client_socket.recv(1024)).decode()
-            print(f"Join room response: {response}")
             if response == "hello, welcome":
                 self.room_frame.pack_forget()
                 self.chat_frame.pack(pady=10)
@@ -128,97 +124,80 @@ class ChatClient:
             else:
                 messagebox.showerror("Error", f"Failed to join room: {response}")
         except socket.timeout:
-            messagebox.showerror("Error", "Server response timed out. Try again.")
+            messagebox.showerror("Error", "Server response timed out")
         except Exception as e:
             messagebox.showerror("Error", f"Join room failed: {e}")
-            print(f"Join room exception: {e}")
 
     def receive_messages(self):
         while self.running:
             try:
                 with self.socket_lock:
                     if not self.client_socket or self.client_socket.fileno() == -1:
-                        print("Socket closed, stopping receive thread")
                         break
-                    start_time = time.time()
                     encrypted_data = self.client_socket.recv(1024)
-                    recv_time = time.time()
                 if not encrypted_data:
-                    print("Received empty data, checking if intentional")
                     continue
                 message = self.cipher.decrypt(encrypted_data).decode()
-                print(f"Received message after {recv_time - start_time:.2f}s: {message}")
-                if message == "goodbye":
-                    self.running = False
-                    self.chat_display.config(state="normal")
-                    self.chat_display.insert(tk.END, "Disconnected from room\n", "system")
-                    self.chat_display.config(state="disabled")
-                    break
-                self.chat_display.config(state="normal")
-                if message.startswith("Private from"):
-                    self.chat_display.insert(tk.END, f"{message}\n", "private")
-                elif message.endswith("entered the chat room") or message.endswith("left the chat room"):
-                    self.chat_display.insert(tk.END, f"{message}\n", "system")
-                elif message.startswith("Users in room:"):
-                    self.chat_display.insert(tk.END, f"{message}\n", "system")
-                else:
-                    self.chat_display.insert(tk.END, f"{message}\n", "public")
-                self.chat_display.config(state="disabled")
-                self.chat_display.see(tk.END)
+                timestamp = message.split(" ", 1)[0] if message.startswith("TS:") else "TS:0.0"
+                msg_body = message.split(" ", 1)[1] if message.startswith("TS:") else message
+                delay = time.perf_counter() - float(timestamp.split(':')[1])
+                print(f"Client received '{msg_body}' after {delay:.4f}s since sent")
+                # Move GUI update to main thread
+                self.root.after(0, self.display_message, msg_body, delay)
             except socket.timeout:
-                print("Receive timeout after 5s, continuing")
                 continue
-            except ConnectionResetError as e:
-                print(f"Receive error: Connection reset by server - {e}")
-                break
-            except BrokenPipeError as e:
-                print(f"Receive error: Broken pipe - {e}")
-                break
             except Exception as e:
-                print(f"Receive error: {type(e).__name__} - {e}")
-                if "connection" in str(e).lower() or "broken pipe" in str(e).lower():
-                    break
+                print(f"Receive error: {e}")
+                break
         if self.running:
             self.root.after(0, self.handle_disconnect)
-        self.cleanup_socket()
+
+    def display_message(self, msg_body, delay):
+        self.chat_display.config(state="normal")
+        if msg_body.startswith("Private from "):
+            self.chat_display.insert(tk.END, f"{msg_body}\n", "private")
+        elif msg_body.endswith("entered the chat room") or msg_body.endswith("left the chat room"):
+            self.chat_display.insert(tk.END, f"{msg_body}\n", "system")
+        elif msg_body.startswith("Users in room:"):
+            self.chat_display.insert(tk.END, f"{msg_body}\n", "system")
+        else:
+            self.chat_display.insert(tk.END, f"{msg_body}\n", "public")
+        self.chat_display.config(state="disabled")
+        self.chat_display.see(tk.END)
 
     def send_message(self):
         msg = self.msg_entry.get().strip()
         if not msg:
             return
-        print(f"Preparing to send message: {msg}")
         parts = msg.split(" ", 2)
+        timestamp = time.perf_counter()
         if parts[0].lower() == "private" and len(parts) == 3:
             recipients, body = parts[1], parts[2]
-            command = f"Private message: length={len(body)}, to={recipients} {body}"
+            command = f"TS:{timestamp} Private message: length={len(body)}, to={recipients} {body}"
         else:
-            command = f"Public message: from={self.username} length={len(msg)} {msg}"
+            command = f"TS:{timestamp} Public message: from={self.username} length={len(msg)} {msg}"
+        print(f"Client sending '{command.split(' ', 1)[1]}' at {timestamp}")
         self.send_command(command)
         self.msg_entry.delete(0, tk.END)
 
     def list_users(self):
-        self.send_command("List")
+        self.send_command(f"TS:{time.perf_counter()} List")
 
     def send_command(self, command):
         try:
             with self.socket_lock:
                 if not self.client_socket or self.client_socket.fileno() == -1:
                     raise ConnectionError("Socket is closed")
-                print(f"Sending command: {command}")
-                start_time = time.time()
                 self.client_socket.send(self.cipher.encrypt(command.encode()))
-                send_time = time.time()
-                print(f"Command sent successfully after {send_time - start_time:.2f}s")
         except socket.timeout:
-            messagebox.showerror("Error", "Send timed out. Server may be unresponsive.")
+            messagebox.showerror("Error", "Send timed out")
         except Exception as e:
-            print(f"Send error: {type(e).__name__} - {e}")
             messagebox.showerror("Error", f"Send failed: {e}")
             self.handle_disconnect()
 
     def exit_chat(self):
         self.running = False
-        self.send_command("Exit")
+        self.send_command(f"TS:{time.perf_counter()} Exit")
         self.chat_frame.pack_forget()
         self.auth_frame.pack(pady=10)
 
